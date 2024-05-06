@@ -11,47 +11,51 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKENN')
 bot = telebot.TeleBot(BOT_TOKEN)
 
-product = None
-min_price = None
-max_price = None
-last_message = None
-posted_products = set()
+user_products = {}
+posted_products = {}
 
-@bot.message_handler(commands=['start'])
-def start(message):
-    global product, min_price, max_price, last_message
-    product = None
-    min_price = None
-    max_price = None
-    last_message = message
-    welcome_message = "Welcome to the Wallapop product search bot!\n\n"
-    welcome_message += "To get started, please enter the product you'd like to search for."
-    bot.send_message(chat_id=message.chat.id, text=welcome_message)
+@bot.message_handler(commands=['add'])
+def add_product(message):
+    global user_products, posted_products
+    if message.chat.id not in user_products:
+        user_products[message.chat.id] = []
+        posted_products[message.chat.id] = set()
+    bot.send_message(chat_id=message.chat.id, text="Okay, let's add a new product. Please enter the product name.")
     bot.register_next_step_handler(message, get_product)
 
 def get_product(message):
-    global product
+    global user_products
     product = message.text
+    user_products[message.chat.id].append({
+        'product': product,
+        'min_price': None,
+        'max_price': None
+    })
     bot.send_message(chat_id=message.chat.id,
                      text=f"Okay, you're looking for '{product}'. Please enter the minimum price you're willing to pay.")
     bot.register_next_step_handler(message, get_min_price)
 
 def get_min_price(message):
-    global min_price
+    global user_products
     min_price = message.text
+    user_products[message.chat.id][-1]['min_price'] = min_price
     bot.send_message(chat_id=message.chat.id,
                      text=f"Great, the minimum price is {min_price}. Now, please enter the maximum price you're willing to pay.")
     bot.register_next_step_handler(message, get_max_price)
 
 def get_max_price(message):
-    global max_price
+    global user_products
     max_price = message.text
+    user_products[message.chat.id][-1]['max_price'] = max_price
     bot.send_message(chat_id=message.chat.id, text="Okay, let me search for products that match your criteria.")
-    search_products(message)
+    search_products(message.chat.id)
 
-def search_products(message):
-    global product, min_price, max_price, posted_products
-    if product and min_price and max_price:
+def search_products(chat_id):
+    global user_products, posted_products
+    for product_info in user_products[chat_id]:
+        product = product_info['product']
+        min_price = product_info['min_price']
+        max_price = product_info['max_price']
         encoded_product = urllib.parse.quote(product)
         api_url = f'https://api.wallapop.com/api/v3/general/search?keywords={encoded_product}&min_price={min_price}&max_price={max_price}'
         headers = {
@@ -67,22 +71,30 @@ def search_products(message):
         if matching_objects:
             for obj in matching_objects:
                 product_url = f"https://es.wallapop.com/item/{obj['web_slug']}"
-                if product_url not in posted_products:
+                if product_url not in posted_products[chat_id]:
                     product_message = f"***{obj['title']}***\n{product_url}\n****{obj['price']} €****"
-                    bot.send_message(chat_id=message.chat.id, text=product_message, parse_mode='Markdown')
-                    posted_products.add(product_url)
+                    bot.send_message(chat_id=chat_id, text=product_message, parse_mode='Markdown')
+                    posted_products[chat_id].add(product_url)
         else:
-            bot.send_message(chat_id=message.chat.id, text="Sorry, no matching products were found.")
-
-        bot.send_message(chat_id=message.chat.id,
-                         text="Would you like to search for another product? Just send the /start command.")
+            bot.send_message(chat_id=chat_id, text=f"Sorry, no matching products were found for '{product}'.")
 
 def check_for_new_products():
-    global product, min_price, max_price, last_message
+    global user_products, posted_products
     while True:
-        if product and min_price and max_price:
-            search_products(last_message)
-        time.sleep(60)  # Wait for 1 minute before checking again
+        for chat_id, products in user_products.items():
+            search_products(chat_id)
+        time.sleep(120)  # Wait for 2 minutes before checking again
+
+@bot.message_handler(commands=['products'])
+def show_products(message):
+    global user_products
+    if message.chat.id in user_products and user_products[message.chat.id]:
+        product_list = "Currently tracked products:\n\n"
+        for product_info in user_products[message.chat.id]:
+            product_list += f"- {product_info['product']} (min price: {product_info['min_price']}, max price: {product_info['max_price']})\n"
+        bot.send_message(chat_id=message.chat.id, text=product_list)
+    else:
+        bot.send_message(chat_id=message.chat.id, text="You are not currently tracking any products.")
 
 def main():
     product_checker = Thread(target=check_for_new_products)
