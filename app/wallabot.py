@@ -20,7 +20,7 @@ def add_product(message):
     if message.chat.id not in user_products:
         user_products[message.chat.id] = []
         posted_products[message.chat.id] = set()
-    bot.send_message(chat_id=message.chat.id, text="Okay, let's add a new product. Please enter the product name.")
+    bot.send_message(chat_id=message.chat.id, text=" Please enter the product name.")
     bot.register_next_step_handler(message, get_product)
 
 def get_product(message):
