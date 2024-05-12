@@ -8,6 +8,10 @@ import urllib.parse
 from threading import Thread
 import uuid
 
+import logging
+
+logging.basicConfig(filename='app.log', level=logging.INFO)
+
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKENN')
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -70,7 +74,7 @@ def search_products(chat_id):
         min_price = product_info['min_price']
         max_price = product_info['max_price']
         product_id = product_info['id']
-        product_index = product_info['index']
+
 
         encoded_product = urllib.parse.quote(product)
         api_url = f'https://api.wallapop.com/api/v3/general/search?keywords={encoded_product}&min_price={min_price}&max_price={max_price}'
@@ -92,7 +96,7 @@ def search_products(chat_id):
                 if product_url not in posted_products[chat_id][product_id]:
                     if all(word in obj['title'].lower() for word in product_name) or all(word in obj['description'].lower() for word in product_name): # for a richer output
                         if float(min_price) <= obj['price'] <= float(max_price):
-                            product_message = f"***{obj['title']}***\n{product_url}\n****{obj['price']} €****\n(Index: {product_index})"
+                            product_message = f"***{obj['title']}***\n{product_url}\n****{obj['price']} €****"
                             bot.send_message(chat_id=chat_id, text=product_message, parse_mode='Markdown')
                             posted_products[chat_id][product_id].append(product_url)
         else:
