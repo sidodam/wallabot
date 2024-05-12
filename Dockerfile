@@ -4,4 +4,4 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt
 COPY ./app ./app
 
-CMD [ "python", "./app/wallabot.py"]
+CMD [ "python",  "-u", "./app/wallabot.py"]
