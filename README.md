@@ -1,6 +1,6 @@
 ## Description:
 Wallabot is a Telegram bot that fetches real-time product listings directly from Wallapop.
-It uses memory-database because it fits my needs, any additions, are welcome. 
+It uses memory-database because it fits my needs, any additions are welcome. 
 
 
 ## Features
