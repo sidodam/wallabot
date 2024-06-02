@@ -1,81 +1,142 @@
+import asyncio
 import requests
 import json
-import telebot
-import time
-import os
-from dotenv import load_dotenv
 import urllib.parse
-from threading import Thread
 import uuid
+from aiogram import types, Dispatcher, Bot
+from aiogram.filters import Command
+from api_token import TOKEN
 
-import logging
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
 
-logging.basicConfig(filename='app.log', level=logging.INFO)
+def load_data():
+    try:
+        with open('products.json', 'r') as f:
+            data = json.load(f)
+        print("Loaded data:", data)  # Debug print
+        return data
+    except FileNotFoundError:
+        print("products.json file not found.")
+        return {'user_products': {}, 'posted_products': {}}
+    except json.JSONDecodeError:
+        print("Error decoding JSON from products.json.")
+        return {'user_products': {}, 'posted_products': {}}
 
-load_dotenv()
-BOT_TOKEN = os.getenv('BOT_TOKENN')
-bot = telebot.TeleBot(BOT_TOKEN)
 
-user_products = {}
-posted_products = {}  #set object does not support item assignment
+def empty_data():
+    try:
+        with open('products.json', 'w') as f:
+            json.dump({'user_products': {}, 'posted_products': {}}, f)
+        print("products.json file emptied successfully.")
+    except Exception as e:
+        print(f"Error emptying products.json file: {e}")
 
-@bot.message_handler(commands=['add'])
-def add_product(message):
+def save_data(data):
+    try:
+        with open('products.json', 'w') as f:
+            json.dump(data, f)
+        print("Data saved successfully to products.json")
+    except Exception as e:
+        print(f"Error saving data to products.json: {e}")
+
+data = load_data()
+print("Data after loading:", data)  # Additional debug print
+user_products = data['user_products']
+posted_products = data['posted_products']
+
+@dp.message(Command('add'))
+async def handle_add(message: types.Message):
     global user_products, posted_products
-    if message.chat.id not in user_products:
-        user_products[message.chat.id] = []
-        posted_products[message.chat.id] = {}
-    bot.send_message(chat_id=message.chat.id, text=" Please enter the product name.")
-    bot.register_next_step_handler(message, get_product)
+    chat_id = str(message.chat.id)
+    if chat_id not in user_products:
+        user_products[chat_id] = {}
+        posted_products[chat_id] = {}
+    await message.reply("Please enter the product name, minimum price, and maximum price separated by commas (e.g., 'iPhone,100,500').")
+
+@dp.message(Command('ls'))
+async def list_products(message: types.Message):
+    try:
+        with open('products.json', 'r') as file:
+            data = json.load(file)
+    except FileNotFoundError:
+        print("products.json file not found.")
+        await message.reply("No products have been added yet.")
+        return
+    except json.JSONDecodeError:
+        print("Error decoding JSON from products.json.")
+        await message.reply("An error occurred while reading the products data.")
+        return
+
+    # Extract the used products
+    products = set()
+    for product_id, product_data in data["user_products"]["1168188437"].items():
+        product = product_data["product"]
+        min_price = product_data["min_price"]
+        max_price = product_data["max_price"]
+        products.add(f"{product} price: {min_price} - {max_price}")
+
+    # Print the list of used products
+    product_list = "\n".join(f"{i}. {product}" for i, product in enumerate(products, start=1))
+    await message.reply(f"All products:\n{product_list}")
 
 
-def get_product(message):
-    global user_products
-    product = message.text
-    product_id = str(uuid.uuid4())
-    user_products[message.chat.id].append({
-        'id': product_id,
-        'index': len(user_products[message.chat.id]),
-        'product': product,
-        'min_price': None,
-        'max_price': None
-    })
-    bot.send_message(chat_id=message.chat.id,
-                     text=f"You're looking for '{product}'. Please enter the minimum price you're willing to pay.")
-    bot.register_next_step_handler(message, get_min_price, product_id)
+
+@dp.message(Command('rm'))
+async def handle_rm(message: types.Message):
+    empty_data()
+    await message.reply("products.json file has been emptied.")
 
 
-def get_min_price(message, product_id):
-    global user_products
-    min_price = message.text
-    for product_info in user_products[message.chat.id]:
-        if product_info['id'] == product_id:
-            product_info['min_price'] = min_price
-            break
-    bot.send_message(chat_id=message.chat.id,
-                     text=f"Great, the minimum price is {min_price}. Now, please enter the maximum price you're willing to pay.")
-    bot.register_next_step_handler(message, get_max_price, product_id)
-
-def get_max_price(message, product_id):
-    global user_products
-    max_price = message.text
-    for product_info in user_products[message.chat.id]:
-        if product_info['id'] == product_id:
-            product_info['max_price'] = max_price
-            break
-    bot.send_message(chat_id=message.chat.id, text="Okay, let me see what I can find.")
-    search_products(message.chat.id)
-
-def search_products(chat_id):
+@dp.message()
+async def process_product_info(message: types.Message):
     global user_products, posted_products
-    for product_info in user_products[chat_id]:
+    chat_id = str(message.chat.id)
+    try:
+        product, min_price, max_price = message.text.split(',')
+        product_id = str(uuid.uuid4())
+        # Load the existing data from the JSON file
+        data = load_data()
+        user_products = data['user_products']
+        posted_products = data['posted_products']
+
+        # Check if the chat_id exists in the user_products dictionary
+        if chat_id in user_products:
+            # Add the new product to the existing dictionary
+            user_products[chat_id][product_id] = {
+                'id': product_id,
+                'product': product.strip(),
+                'min_price': min_price.strip(),
+                'max_price': max_price.strip()
+            }
+        else:
+            # Create a new dictionary for the chat_id and add the new product
+            user_products[chat_id] = {
+                product_id: {
+                    'id': product_id,
+                    'product': product.strip(),
+                    'min_price': min_price.strip(),
+                    'max_price': max_price.strip()
+                }
+            }
+            posted_products[chat_id] = {}
+
+        await search_products(chat_id)
+
+        # Save the updated data to the JSON file
+        data = {'user_products': user_products, 'posted_products': posted_products}
+        save_data(data)
+    except ValueError:
+        await message.reply("Invalid input format. Please try again and separate the product name, minimum price, and maximum price with commas.")
+
+async def search_products(chat_id):
+    global user_products, posted_products
+    for product_id, product_info in user_products[chat_id].items():
         product = product_info['product'].lower()
         product_name = product.split()
         min_price = product_info['min_price']
         max_price = product_info['max_price']
         product_id = product_info['id']
-
-
         encoded_product = urllib.parse.quote(product)
         api_url = f'https://api.wallapop.com/api/v3/general/search?keywords={encoded_product}&min_price={min_price}&max_price={max_price}'
         headers = {
@@ -84,78 +145,46 @@ def search_products(chat_id):
             'Content-Type': 'application/json'
         }
         print(f"API URL: {api_url}")
-        response = requests.get(api_url, headers=headers)
-        data = json.loads(response.text)
-        matching_objects = data['search_objects']
+        try:
+            response = requests.get(api_url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            matching_objects = data['search_objects']
 
-        if matching_objects:
-            if product_id not in posted_products[chat_id]:
-                posted_products[chat_id][product_id] = []
-            for obj in matching_objects:
-                product_url = f"https://es.wallapop.com/item/{obj['web_slug']}"
-                if product_url not in posted_products[chat_id][product_id]:
-                    if all(word in obj['title'].lower() for word in product_name) or all(word in obj['description'].lower() for word in product_name): # for a richer output
-                        if float(min_price) <= obj['price'] <= float(max_price):
-                            product_message = f"***{obj['title']}***\n{product_url}\n****{obj['price']} €****"
-                            bot.send_message(chat_id=chat_id, text=product_message, parse_mode='Markdown')
-                            posted_products[chat_id][product_id].append(product_url)
-        else:
-            bot.send_message(chat_id=chat_id, text=f"Sorry, no matching products were found for '{product}'.")
+            if matching_objects:
+                if product_id not in posted_products[chat_id]:
+                    posted_products[chat_id][product_id] = []
+                for obj in matching_objects:
+                    product_url = f"https://es.wallapop.com/item/{obj['web_slug']}"
+                    if product_url not in posted_products[chat_id][product_id]:
+                        if all(word in obj['title'].lower() for word in product_name) or all(word in obj['description'].lower() for word in product_name):
+                            if float(min_price) <= obj['price'] <= float(max_price):
+                                product_message = f"***{obj['title']}***\n{product_url}\n****{obj['price']} €****"
+                                await bot.send_message(chat_id=chat_id, text=product_message, parse_mode='Markdown')
+                                posted_products[chat_id][product_id].append(product_url)
+            else:
+                await bot.send_message(chat_id=chat_id, text=f"Sorry, no matching products were found for '{product}'.")
+        except requests.RequestException as e:
+            await bot.send_message(chat_id=chat_id, text=f"Error fetching data for '{product}': {e}")
 
+    # Save the data to the JSON file
+    data = {'user_products': user_products, 'posted_products': posted_products}
+    save_data(data)
 
-@bot.message_handler(commands=['ls'])
-def show_products(message):
-    global user_products
-    if message.chat.id in user_products and user_products[message.chat.id]:
-        product_list = "Currently tracked products:\n\n"
-        for product_info in user_products[message.chat.id]:
-            product_list += f"- {product_info['product']} (min price: {product_info['min_price']}, max price: {product_info['max_price']}, Index: {product_info['index']})\n"
-        bot.send_message(chat_id=message.chat.id, text=product_list)
-        print('user_products', user_products)
-        print('posted_products', posted_products)
-    else:
-        bot.send_message(chat_id=message.chat.id, text="You are not currently tracking any products.")
-
-@bot.message_handler(commands=['rm'])
-def remove_product(message):
-    global user_products, posted_products
-    if message.chat.id in user_products and user_products[message.chat.id]:
-        product_list = "Currently tracked products:\n\n"
-        for product_info in user_products[message.chat.id]:
-            product_list += f"- {product_info['product']} (Index: {product_info['index']})\n"
-        bot.send_message(chat_id=message.chat.id, text=product_list)
-        bot.send_message(chat_id=message.chat.id, text="Please enter the index of the product you want to remove.")
-        bot.register_next_step_handler(message, delete_product)
-    else:
-        bot.send_message(chat_id=message.chat.id, text="You are not currently tracking any products.")
-
-def delete_product(message):
-    global user_products, posted_products
-    chat_id = message.chat.id
-    try:
-        index_to_remove = int(message.text)
-        if index_to_remove >= 0 and index_to_remove < len(user_products[chat_id]):
-            product_to_remove = user_products[chat_id][index_to_remove]
-            product_id = product_to_remove['id']
-            del user_products[chat_id][index_to_remove]
-            del posted_products[chat_id][product_id]
-            bot.send_message(chat_id=chat_id, text=f"Removed product '{product_to_remove['product']}' from your tracked products.")
-        else:
-            bot.send_message(chat_id=chat_id, text="Invalid index. Please try again.")
-    except (ValueError, IndexError):
-        bot.send_message(chat_id=chat_id, text="Invalid index. Please try again.")
-
-def check_for_new_products():
-    global user_products, posted_products
+async def periodic_fetch(interval=180):
     while True:
-        for chat_id, products in user_products.items():
-            search_products(chat_id)
-        time.sleep(80)
+        for chat_id in user_products:
+            await search_products(chat_id)
+        await asyncio.sleep(interval)
 
-def main():
-    product_checker = Thread(target=check_for_new_products)
-    product_checker.start()
-    bot.polling(none_stop=True)
+async def main() -> None:
+    """Entry point"""
+    fetch_task = asyncio.create_task(periodic_fetch())
+    try:
+        await dp.start_polling(bot)
+    finally:
+        fetch_task.cancel()
+        await fetch_task
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
